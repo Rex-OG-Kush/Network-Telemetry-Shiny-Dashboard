@@ -1,4 +1,4 @@
-# Network Telemetry & R Shiny Dashboard 🛡️📈
+# Network Telemetry & R Dashboard 🛡️📈
 
 An interactive enterprise web application layout built using the R Shiny framework designed to visualize live network metrics, track real-time routing performance, and isolate infrastructure security threats.
 
