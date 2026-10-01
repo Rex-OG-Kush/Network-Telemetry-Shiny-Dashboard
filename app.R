@@ -1,16 +1,19 @@
 # ==============================================================================
 # PROJECT: INTERACTIVE NETWORK TELEMETRY & SECURITY DASHBOARD (R SHINY)
 # AUTHOR: MATUTUZELA JABULANI NDLOVU
-# PURPOSE: Front-end UI and server architecture for enterprise log visualization
+# PURPOSE: Production Azure-linked Streaming UI & Server Architecture
 # ==============================================================================
 
 library(shiny)
 library(dplyr)
 library(ggplot2)
+library(AzureStor)  # Azure SDK dependency for real-time cloud data pipeline
+library(jsonlite)
 
-# 1. USER INTERFACE (UI) DEFINITION - Controls the layout, tabs, and styling
+# 1. USER INTERFACE (UI) DEFINITION
 ui <- fluidPage(
-  theme = shinytheme("slate"), # Dark mode theme for security operation centers
+  # Using custom CSS style matching the dark "slate" palette securely
+  theme = shinythemes::shinytheme("slate"), 
   
   titlePanel("🛡️ Enterprise Network Telemetry & Security Dashboard"),
   
@@ -46,42 +49,62 @@ ui <- fluidPage(
   )
 )
 
-# 2. SERVER LOGIC - Generates the plots, processes thresholds, and filters logs
-server <- function(input, output) {
+# 2. SERVER LOGIC - Live Streaming Azure Engine
+server <- function(input, output, session) {
   
-  # Reactive data engine simulating real-time telemetry logs
-  get_telemetry_data <- reactive({
-    set.seed(930925)
-    data <- data.frame(
-      Time = seq(from = Sys.time() - 3600*24, by = "15 min", length.out = 96),
-      Interface = sample(c("Eth0/1 - Core Switch", "Eth0/2 - Perimeter Firewall", "Wlan0 - Guest Wi-Fi"), 96, replace = TRUE),
-      PacketsPerSec = rpois(96, lambda = 120),
-      Latency_ms = runif(96, min = 5, max = 45)
-    )
-    # Inject deliberate malicious spikes into the timeline
-    data$PacketsPerSec[c(14, 45, 78)] <- c(485, 520, 460)
+  # Establishes connection boundary with your Terraform-managed cloud endpoints
+  blob_endpoint <- storage_endpoint(
+    Sys.getenv("AZURE_STORAGE_ENDPOINT"), 
+    sas = Sys.getenv("AZURE_STORAGE_SAS_TOKEN")
+  )
+  container <- storage_container(blob_endpoint, "financial-ticks-delta-lake")
+  
+  # Reactive polling engine configured for an automated 5-second streaming cadence
+  get_live_azure_data <- reactive({
+    # Forces invalidation to loop updates without requiring a manual browser refresh
+    invalidateLater(5000, session)
     
-    if(input$interface != "All Interfaces") {
-      data <- data %>% filter(Interface == input$interface)
-    }
-    return(data)
+    tryCatch({
+      # Dynamically stream down the primary incoming validated pipeline logs
+      storage_download(container, "live_network_telemetry.json", "local_temp_telemetry.json", overwrite = TRUE)
+      data <- jsonlite::fromJSON("local_temp_telemetry.json")
+      
+      # Enforce standard formatting definitions on raw incoming schemas
+      data$Time <- as.POSIXct(data$Time)
+      data$PacketsPerSec <- as.numeric(data$PacketsPerSec)
+      data$Latency_ms <- as.numeric(data$Latency_ms)
+      
+      # Filter matrix variables based on user layout choices
+      if(input$interface != "All Interfaces") {
+        data <- data %>% filter(Interface == input$interface)
+      }
+      return(data)
+      
+    }, error = function(e) {
+      # Resilient fallback state array if network paths experience intermittent dropouts
+      showNotification("Re-establishing continuous pipeline sync...", type = "warning", duration = 3)
+      return(data.frame(Time = Sys.time(), Interface = "Offline", PacketsPerSec = 0, Latency_ms = 0))
+    })
   })
   
-  # Render the Time-Series Telemetry Trend Plot using ggplot2
-  output.telemetryPlot <- renderPlot({
-    df <- get_telemetry_data()
+  # Corrected reactive output element syntax (Replaced '.' syntax layout error)
+  output$telemetryPlot <- renderPlot({
+    df <- get_live_azure_data()
+    
     ggplot(df, aes(x = Time, y = PacketsPerSec, color = Interface)) +
-      geom_line(size = 1) +
-      geom_hline(yintercept = input$threshold, linetype = "dashed", color = "red", size = 1) +
-      labs(title = "Network Traffic Throughput vs Security Alert Baselines",
-           x = "Timeline", y = "Packets Per Second (PPS)") +
+      geom_line(linewidth = 1) +
+      geom_point(data = df %>% filter(PacketsPerSec > input$threshold), color = "red", size = 3) +
+      geom_hline(yintercept = input$threshold, linetype = "dashed", color = "red", linewidth = 1) +
+      labs(title = "Live Azure Delta-Lake Stream vs Security Alert Baselines",
+           x = "Timeline Log Windows", y = "Packets Per Second (PPS)") +
       theme_minimal()
   })
   
-  # Render the basic metrics summary table
+  # Render the functional operational summaries
   output$metricsTable <- renderTable({
-    df <- get_telemetry_data()
-    df %>% group_by(Interface) %>%
+    df <- get_live_azure_data()
+    df %>% 
+      group_by(Interface) %>%
       summarise(Avg_Throughput_PPS = mean(PacketsPerSec),
                 Peak_Throughput_PPS = max(PacketsPerSec),
                 Avg_Latency_ms = mean(Latency_ms))
@@ -89,8 +112,9 @@ server <- function(input, output) {
   
   # Render the isolated, high-risk security alert tracking table
   output$alertTable <- renderTable({
-    df <- get_telemetry_data()
-    df %>% filter(PacketsPerSec > input$threshold) %>%
+    df <- get_live_azure_data()
+    df %>% 
+      filter(PacketsPerSec > input$threshold) %>%
       select(Time, Interface, PacketsPerSec, Latency_ms) %>%
       rename(Trigger_Time = Time, Breached_PPS = PacketsPerSec)
   })
